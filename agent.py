@@ -1,6 +1,8 @@
 import torch
 import random
 import numpy as np
+import os
+from datetime import datetime
 from collections import deque
 from game import SnakeGameAI, Direction, Point
 from model import Linear_QNet, QTrainer
@@ -9,6 +11,7 @@ from helper import plot
 MAX_MEMORY = 100_000
 BATCH_SIZE = 1000
 LR = 0.001
+
 
 class Agent:
 
@@ -19,7 +22,6 @@ class Agent:
         self.memory = deque(maxlen=MAX_MEMORY) # popleft()
         self.model = Linear_QNet(11, 256, 3)
         self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
-
 
     def get_state(self, game):
         head = game.snake[0]
@@ -68,11 +70,11 @@ class Agent:
         return np.array(state, dtype=int)
 
     def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done)) # popleft if MAX_MEMORY is reached
+        self.memory.append((state, action, reward, next_state, done))  # popleft if MAX_MEMORY is reached
 
     def train_long_memory(self):
         if len(self.memory) > BATCH_SIZE:
-            mini_sample = random.sample(self.memory, BATCH_SIZE) # list of tuples
+            mini_sample = random.sample(self.memory, BATCH_SIZE)  # list of tuples
         else:
             mini_sample = self.memory
 
@@ -100,6 +102,24 @@ class Agent:
         return final_move
 
 
+def save_model_state(state_dict, session_name):
+    default_path = '../model_zoo/snake_qlearn/'
+    os.makedirs(default_path, exist_ok=True)
+    file_name = os.path.join(default_path, f"{session_name}.pth")
+    torch.save(state_dict, file_name)
+
+
+def load_model_state(instance, ms_path):
+    assert os.path.exists(ms_path), f"Path {ms_path} not exists. Cound't proceed further!"
+    if isinstance(instance, Agent):
+        model = instance.model
+        model.load_state_dict(torch.load(ms_path))
+        model.eval()
+    else:
+        raise NotImplemented("Need to implement it!")
+    return model
+
+
 def train():
     plot_scores = []
     plot_mean_scores = []
@@ -107,6 +127,7 @@ def train():
     record = 0
     agent = Agent()
     game = SnakeGameAI()
+    session_name = f'snake_q_learner_{datetime.today().strftime("%m%d%Y")}'
     while True:
         # get old state
         state_old = agent.get_state(game)
@@ -132,7 +153,9 @@ def train():
 
             if score > record:
                 record = score
-                agent.model.save()
+                current_state = agent.model.state_dict()
+                sess_name = f"{session_name}_scores{score}"
+                save_model_state(current_state, sess_name)
 
             print('Game', agent.n_games, 'Score', score, 'Record:', record)
 
@@ -143,5 +166,30 @@ def train():
             plot(plot_scores, plot_mean_scores)
 
 
+def infer():
+    agent = Agent()
+    game = SnakeGameAI()
+    state = torch.tensor(agent.get_state(game), dtype=torch.float)
+    model_path = "..\model_zoo\snake_qlearn\snake_q_learner_02112023_scores48.pth"
+    model = load_model_state(agent, model_path)
+    assert model, "Tape loading error"
+    record = 48
+    move_vector = [0, 0, 0]
+    while True:
+        # get move
+        predict = model(state)
+        item = torch.argmax(predict).item()
+        move_vector[item] = 1
+
+        # perform move and get new state
+        _, done, score = game.play_step(move_vector)
+        state = torch.tensor(agent.get_state(game), dtype=torch.float)
+
+        if done:
+            print('Game', agent.n_games, 'Score', score, 'Record:', record)
+            break
+
+
 if __name__ == '__main__':
-    train()
+    # train()
+    infer()
